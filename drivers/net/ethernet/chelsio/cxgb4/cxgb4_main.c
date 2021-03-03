@@ -6405,7 +6405,8 @@ static int chcr_offload_state(struct adapter *adap,
 	switch (op_val) {
 #if IS_ENABLED(CONFIG_CHELSIO_TLS_DEVICE)
 	case CXGB4_TLSDEV_OPS:
-		if (!adap->uld[CXGB4_ULD_KTLS].handle) {
+		if (!adap->uld[CXGB4_ULD_KTLS].handle
+		    && !(adap->flags & CXGB4_SHUTTING_DOWN)) {
 			dev_dbg(adap->pdev_dev, "ch_ktls driver is not loaded\n");
 			return -EOPNOTSUPP;
 		}
@@ -6418,7 +6419,8 @@ static int chcr_offload_state(struct adapter *adap,
 #endif /* CONFIG_CHELSIO_TLS_DEVICE */
 #if IS_ENABLED(CONFIG_CHELSIO_IPSEC_INLINE)
 	case CXGB4_XFRMDEV_OPS:
-		if (!adap->uld[CXGB4_ULD_IPSEC].handle) {
+		if (!adap->uld[CXGB4_ULD_IPSEC].handle
+		    && !(adap->flags & CXGB4_SHUTTING_DOWN)) {
 			dev_dbg(adap->pdev_dev, "chipsec driver is not loaded\n");
 			return -EOPNOTSUPP;
 		}
