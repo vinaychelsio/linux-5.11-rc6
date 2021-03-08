@@ -1106,6 +1106,16 @@ static void chtls_set_tcp_window(struct chtls_sock *csk)
 		csk->snd_win *= scale;
 }
 
+static int chtls_get_module(struct sock *sk)
+{
+	struct inet_connection_sock *icsk = inet_csk(sk);
+
+	if (!try_module_get(icsk->icsk_ulp_ops->owner))
+		return -1;
+
+	return 0;
+}
+
 static struct sock *chtls_recv_sock(struct sock *lsk,
 				    struct request_sock *oreq,
 				    void *network_hdr,
@@ -1131,6 +1141,11 @@ static struct sock *chtls_recv_sock(struct sock *lsk,
 	newsk = tcp_create_openreq_child(lsk, oreq, cdev->askb);
 	if (!newsk)
 		goto free_oreq;
+
+	ctx = tls_get_ctx(lsk);
+	newsk->sk_destruct = ctx->sk_destruct;
+	if (chtls_get_module(newsk))
+		goto free_sk;
 
 	if (lsk->sk_family == AF_INET) {
 		dst = inet_csk_route_child_sock(lsk, newsk, oreq);
@@ -1214,8 +1229,6 @@ static struct sock *chtls_recv_sock(struct sock *lsk,
 
 	oreq->ts_recent = PASS_OPEN_TID_G(ntohl(req->tos_stid));
 	sk_setup_caps(newsk, dst);
-	ctx = tls_get_ctx(lsk);
-	newsk->sk_destruct = ctx->sk_destruct;
 	newsk->sk_prot_creator = lsk->sk_prot_creator;
 	csk->sk = newsk;
 	csk->passive_reap_next = oreq;
@@ -1273,16 +1286,6 @@ static  void mk_tid_release(struct sk_buff *skb,
 	memset(req, 0, len);
 	set_wr_txq(skb, CPL_PRIORITY_SETUP, chan);
 	INIT_TP_WR_CPL(req, CPL_TID_RELEASE, tid);
-}
-
-static int chtls_get_module(struct sock *sk)
-{
-	struct inet_connection_sock *icsk = inet_csk(sk);
-
-	if (!try_module_get(icsk->icsk_ulp_ops->owner))
-		return -1;
-
-	return 0;
 }
 
 static void chtls_pass_accept_request(struct sock *sk,
@@ -1401,8 +1404,6 @@ static void chtls_pass_accept_request(struct sock *sk,
 	if (!newsk)
 		goto reject;
 
-	if (chtls_get_module(newsk))
-		goto reject;
 	inet_csk_reqsk_queue_added(sk);
 	reply_skb->sk = newsk;
 	chtls_install_cpl_ops(newsk);
