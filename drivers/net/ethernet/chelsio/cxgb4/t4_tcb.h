@@ -75,6 +75,11 @@
 #define TCB_T_STATE_M		0xfULL
 #define TCB_T_STATE_V(x)	((x) << TCB_T_STATE_S)
 
+#define TCB_T_MAXSEG_W		3
+#define TCB_T_MAXSEG_S		24
+#define TCB_T_MAXSEG_M		0xfULL
+#define TCB_T_MAXSEG_V(x)	((x) << TCB_T_MAXSEG_S)
+
 #define TCB_TIMESTAMP_W		5
 #define TCB_TIMESTAMP_S		0
 #define TCB_TIMESTAMP_M		0xffffffffULL

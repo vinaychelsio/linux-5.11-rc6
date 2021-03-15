@@ -593,6 +593,36 @@ static void arp_failure_discard(void *handle, struct sk_buff *skb)
 	kfree_skb(skb);
 }
 
+int send_tx_param_update_wr(struct sock *sk, unsigned int mnem,
+			    unsigned int val, int compl)
+{
+	struct chtls_sock *csk = rcu_dereference_sk_user_data(sk);
+	struct flowc_packed {
+		struct fw_flowc_wr fc;
+		struct fw_flowc_mnemval mnemval[1];
+	} __packed sflowc;
+	int nparams, flowclen16, flowclen;
+	struct fw_flowc_wr *flowc;
+
+	memset(&sflowc, 0, sizeof(sflowc));
+	flowc = &sflowc.fc;
+
+	nparams = 1;
+	flowclen16 = flowc_wr_credits(nparams, &flowclen);
+	flowc->op_to_nparams =
+		htonl(FW_WR_OP_V(FW_FLOWC_WR) |
+		      FW_WR_COMPL_V(compl) |
+		      FW_FLOWC_WR_NPARAMS_V(nparams));
+	flowc->flowid_len16 =
+		htonl(FW_WR_LEN16_V(flowclen16) |
+		      FW_WR_FLOWID_V(csk->tid));
+
+	flowc->mnemval[0].mnemonic = mnem;
+	flowc->mnemval[0].val = htonl(val);
+
+	return send_flowc_wr(sk, flowc, flowclen);
+}
+
 int chtls_push_frames(struct chtls_sock *csk, int comp)
 {
 	struct chtls_hws *hws = &csk->tlshws;

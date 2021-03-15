@@ -940,8 +940,7 @@ static void chtls_accept_rpl_arp_failure(void *handle,
 }
 
 static unsigned int chtls_select_mss(const struct chtls_sock *csk,
-				     unsigned int pmtu,
-				     struct cpl_pass_accept_req *req)
+				     unsigned int pmtu, u16 peer_mss)
 {
 	struct chtls_dev *cdev;
 	struct dst_entry *dst;
@@ -949,10 +948,8 @@ static unsigned int chtls_select_mss(const struct chtls_sock *csk,
 	unsigned int iphdrsz;
 	unsigned int mtu_idx;
 	struct tcp_sock *tp;
-	unsigned int mss;
 	struct sock *sk;
 
-	mss = ntohs(req->tcpopt.mss);
 	sk = csk->sk;
 	dst = __sk_dst_get(sk);
 	cdev = csk->cdev;
@@ -965,7 +962,7 @@ static unsigned int chtls_select_mss(const struct chtls_sock *csk,
 	else
 #endif
 		iphdrsz = sizeof(struct iphdr) + sizeof(struct tcphdr);
-	if (req->tcpopt.tstamp)
+	if (csk->opt2 & TSTAMPS_EN_F)
 		tcpoptsz += round_up(TCPOLEN_TIMESTAMP, 4);
 
 	tp->advmss = dst_metric_advmss(dst);
@@ -973,8 +970,8 @@ static unsigned int chtls_select_mss(const struct chtls_sock *csk,
 		tp->advmss = USER_MSS(tp);
 	if (tp->advmss > pmtu - iphdrsz)
 		tp->advmss = pmtu - iphdrsz;
-	if (mss && tp->advmss > mss)
-		tp->advmss = mss;
+	if (peer_mss && tp->advmss > peer_mss)
+		tp->advmss = peer_mss;
 
 	tp->advmss = cxgb4_best_aligned_mtu(cdev->lldi->mtus,
 					    iphdrsz + tcpoptsz,
@@ -1029,18 +1026,6 @@ static void chtls_pass_accept_rpl(struct sk_buff *skb,
 
 	OPCODE_TID(rpl5) = cpu_to_be32(MK_OPCODE_TID(CPL_PASS_ACCEPT_RPL,
 						     csk->tid));
-	csk->mtu_idx = chtls_select_mss(csk, dst_mtu(__sk_dst_get(sk)),
-					req);
-	opt0 = TCAM_BYPASS_F |
-	       WND_SCALE_V(RCV_WSCALE(tp)) |
-	       MSS_IDX_V(csk->mtu_idx) |
-	       L2T_IDX_V(csk->l2t_entry->idx) |
-	       NAGLE_V(!(tp->nonagle & TCP_NAGLE_OFF)) |
-	       TX_CHAN_V(csk->tx_chan) |
-	       SMAC_SEL_V(csk->smac_idx) |
-	       DSCP_V(csk->tos >> 2) |
-	       ULP_MODE_V(ULP_MODE_TLS) |
-	       RCV_BUFSIZ_V(min(tp->rcv_wnd >> 10, RCV_BUFSIZ_M));
 
 	opt2 = RX_CHANNEL_V(0) |
 		RSS_QUEUE_VALID_F | RSS_QUEUE_V(csk->rss_qid);
@@ -1061,6 +1046,20 @@ static void chtls_pass_accept_rpl(struct sk_buff *skb,
 	opt2 |= T5_ISS_F;
 	opt2 |= T5_OPT_2_VALID_F;
 	opt2 |= WND_SCALE_EN_V(WSCALE_OK(tp));
+	csk->opt2 = opt2;
+	csk->mtu_idx = chtls_select_mss(csk, dst_mtu(__sk_dst_get(sk)),
+					ntohs(req->tcpopt.mss));
+	opt0 = TCAM_BYPASS_F |
+	       WND_SCALE_V(RCV_WSCALE(tp)) |
+	       MSS_IDX_V(csk->mtu_idx) |
+	       L2T_IDX_V(csk->l2t_entry->idx) |
+	       NAGLE_V(!(tp->nonagle & TCP_NAGLE_OFF)) |
+	       TX_CHAN_V(csk->tx_chan) |
+	       SMAC_SEL_V(csk->smac_idx) |
+	       DSCP_V(csk->tos >> 2) |
+	       ULP_MODE_V(ULP_MODE_TLS) |
+	       RCV_BUFSIZ_V(min(tp->rcv_wnd >> 10, RCV_BUFSIZ_M));
+
 	rpl5->opt0 = cpu_to_be64(opt0);
 	rpl5->opt2 = cpu_to_be32(opt2);
 	rpl5->iss = cpu_to_be32((prandom_u32() & ~7UL) - 1);
@@ -2106,6 +2105,77 @@ static int abort_syn_rcv(struct sock *sk, struct sk_buff *skb)
 	return 0;
 }
 
+/* Build a CPL_SET_TCB_FIELD message as payload of a ULP_TX_PKT command.*/
+static inline void mk_set_tcb_field_ulp(struct chtls_sock *csk,
+					struct cpl_set_tcb_field *req,
+					unsigned int word, u64 mask,
+					u64 val, u8 cookie, int no_reply)
+{
+	struct ulp_txpkt *txpkt = (struct ulp_txpkt *)req;
+	struct ulptx_idata *sc;
+
+	sc = (struct ulptx_idata *)(txpkt + 1);
+	txpkt->cmd_dest = htonl(ULPTX_CMD_V(ULP_TX_PKT) | ULP_TXPKT_DEST_V(0));
+	txpkt->len = htonl(DIV_ROUND_UP(sizeof(*req), 16));
+	sc->cmd_more = htonl(ULPTX_CMD_V(ULP_TX_SC_IMM));
+	sc->len = htonl(sizeof(*req) - sizeof(struct work_request_hdr));
+	OPCODE_TID(req) = htonl(MK_OPCODE_TID(CPL_SET_TCB_FIELD, csk->tid));
+	req->reply_ctrl = htons(NO_REPLY_V(no_reply) |
+				REPLY_CHAN_V(csk->rx_chan) |
+				QUEUENO_V(csk->rss_qid));
+	req->word_cookie = htons(TCB_WORD_V(word) | TCB_COOKIE_V(cookie));
+	req->mask = cpu_to_be64(mask);
+	req->val = cpu_to_be64(val);
+	sc = (struct ulptx_idata *)(req + 1);
+	sc->cmd_more = htonl(ULPTX_CMD_V(ULP_TX_SC_NOOP));
+	sc->len = htonl(0);
+}
+
+static void chtls_set_maxseg(struct sock *sk, unsigned int mtu_idx)
+{
+	struct chtls_sock *csk = rcu_dereference_sk_user_data(sk);
+	struct cpl_set_tcb_field *tstampreq;
+	struct cpl_set_tcb_field *req;
+	struct work_request_hdr *wr;
+	struct ulptx_idata *aligner;
+	struct sk_buff *skb;
+	unsigned int wrlen;
+
+	if (sk->sk_state == TCP_CLOSE || csk_flag(sk, CSK_ABORT_SHUTDOWN))
+		return;
+
+	wrlen = roundup(sizeof(*wr) + 2 * (sizeof(*req) + sizeof(*aligner)), 16);
+
+	skb = alloc_ctrl_skb(csk->ctrl_skb_cache, wrlen);
+	if (!skb)
+		return;
+
+	set_wr_txq(skb, CPL_PRIORITY_CONTROL, csk->port_id);
+
+	req = (struct cpl_set_tcb_field *)__skb_put(skb, wrlen);
+	INIT_ULPTX_WR(req, wrlen, 0, 0);
+
+	wr = (struct work_request_hdr *)req;
+	wr++;
+	req = (struct cpl_set_tcb_field *)wr;
+
+	mk_set_tcb_field_ulp(csk, req, TCB_T_MAXSEG_W,
+			     TCB_T_MAXSEG_V(TCB_T_MAXSEG_M),
+			     TCB_T_MAXSEG_V(mtu_idx), 0, 1);
+
+	aligner = (struct ulptx_idata *)(req + 1);
+	tstampreq = (struct cpl_set_tcb_field *)(aligner + 1);
+
+	/* Clear bits of the TCB Timestamp field to trigger an
+	 * immediate retransmission with the new Maximum Segment Size.
+	 */
+	mk_set_tcb_field_ulp(csk, tstampreq, TCB_TIMESTAMP_W,
+			     TCB_TIMESTAMP_V(0x7FFFFULL << 11),
+			     0, 0, 1);
+
+	cxgb4_ofld_send(csk->egress_dev, skb);
+}
+
 static void chtls_abort_req_rss(struct sock *sk, struct sk_buff *skb)
 {
 	const struct cpl_abort_req_rss *req = cplhdr(skb) + RSS_HDR;
@@ -2113,7 +2183,27 @@ static void chtls_abort_req_rss(struct sock *sk, struct sk_buff *skb)
 	int rst_status = CPL_ABORT_NO_RST;
 	int queue = csk->txq_idx;
 
+	/* Negative advice message from TP indicates that it is having connection
+	 * problem with multiple retransmissions. let's see if something has
+	 * changed like Path MTU (typically indicated via ICMP_FRAG_NEEDED) or
+	 * base MSS is needed, and update the TX MSS for the connection.
+	 */
 	if (is_neg_adv(req->status)) {
+		unsigned int mtu_idx = chtls_select_mss(csk,
+							dst_mtu(__sk_dst_get(sk)), 0);
+		if (mtu_idx == csk->mtu_idx &&
+		    sock_net(sk)->ipv4.sysctl_tcp_mtu_probing)
+			mtu_idx = chtls_select_mss(csk,
+						   sock_net(sk)->ipv4.sysctl_tcp_mtu_probe_floor, 0);
+		if (mtu_idx < csk->mtu_idx) {
+			int flowclen16 = send_tx_param_update_wr(sk,
+								FW_FLOWC_MNEM_MSS,
+								tcp_sk(sk)->advmss, 0);
+			if (flowclen16 >= 0) {
+				chtls_set_maxseg(sk, mtu_idx);
+				csk->mtu_idx = mtu_idx;
+			}
+		}
 		kfree_skb(skb);
 		return;
 	}
