@@ -33,8 +33,6 @@
 #include "chcr_core.h"
 #include "chcr_crypto.h"
 
-#define CHTLS_DRV_VERSION "1.0.0.0-ko"
-
 #define TLS_KEYCTX_RXFLIT_CNT_S 24
 #define TLS_KEYCTX_RXFLIT_CNT_V(x) ((x) << TLS_KEYCTX_RXFLIT_CNT_S)
 
