@@ -354,6 +354,7 @@ static int chcr_set_tcb_field(struct chcr_ktls_info *tx_info, u16 word,
 	return cxgb4_ofld_send(tx_info->netdev, skb);
 }
 
+#if 0
 /*
  * chcr_ktls_mark_tcb_close: mark tcb state to CLOSE
  * @tx_info - driver specific tls info.
@@ -365,6 +366,7 @@ static int chcr_ktls_mark_tcb_close(struct chcr_ktls_info *tx_info)
 				  TCB_T_STATE_V(TCB_T_STATE_M),
 				  CHCR_TCB_STATE_CLOSED, 1);
 }
+#endif
 
 /*
  * chcr_ktls_dev_del:  call back for tls_dev_del.
@@ -386,6 +388,8 @@ static void chcr_ktls_dev_del(struct net_device *netdev,
 	if (!tx_info)
 		return;
 
+	tx_ctx->chcr_info = NULL;
+
 	/* clear l2t entry */
 	if (tx_info->l2te)
 		cxgb4_l2t_release(tx_info->l2te);
@@ -401,7 +405,7 @@ static void chcr_ktls_dev_del(struct net_device *netdev,
 	/* clear tid */
 	if (tx_info->tid != -1) {
 		/* clear tcb state and then release tid */
-		chcr_ktls_mark_tcb_close(tx_info);
+		//chcr_ktls_mark_tcb_close(tx_info);
 		cxgb4_remove_tid(&tx_info->adap->tids, tx_info->tx_chan,
 				 tx_info->tid, tx_info->ip_family);
 	}
@@ -409,7 +413,6 @@ static void chcr_ktls_dev_del(struct net_device *netdev,
 	port_stats = &tx_info->adap->ch_ktls_stats.ktls_port[tx_info->port_id];
 	atomic64_inc(&port_stats->ktls_tx_connection_close);
 	kvfree(tx_info);
-	tx_ctx->chcr_info = NULL;
 	/* release module refcount */
 	module_put(THIS_MODULE);
 }
@@ -579,7 +582,7 @@ static int chcr_ktls_dev_add(struct net_device *netdev, struct sock *sk,
 	return 0;
 
 free_tid:
-	chcr_ktls_mark_tcb_close(tx_info);
+	//chcr_ktls_mark_tcb_close(tx_info);
 #if IS_ENABLED(CONFIG_IPV6)
 	/* clear clip entry */
 	if (tx_info->ip_family == AF_INET6)
@@ -680,7 +683,7 @@ static int chcr_ktls_cpl_act_open_rpl(struct adapter *adap,
 			/* it's a late success, tcb status is establised,
 			 * mark it close.
 			 */
-			chcr_ktls_mark_tcb_close(tx_info);
+			//chcr_ktls_mark_tcb_close(tx_info);
 			cxgb4_remove_tid(&tx_info->adap->tids, tx_info->tx_chan,
 					 tid, tx_info->ip_family);
 		}
@@ -1668,6 +1671,7 @@ static void chcr_ktls_copy_record_in_skb(struct sk_buff *nskb,
 	refcount_add(nskb->truesize, &nskb->sk->sk_wmem_alloc);
 }
 
+#if 0
 /*
  * chcr_ktls_update_snd_una:  Reset the SEND_UNA. It will be done to avoid
  * sending the same segment again. It will discard the segment which is before
@@ -1715,6 +1719,7 @@ static int chcr_ktls_update_snd_una(struct chcr_ktls_info *tx_info,
 
 	return 0;
 }
+#endif
 
 /*
  * chcr_end_part_handler: This handler will handle the record which
@@ -1919,8 +1924,8 @@ static int chcr_short_record_handler(struct chcr_ktls_info *tx_info,
 		/* reset snd una, so the middle record won't send the already
 		 * sent part.
 		 */
-		if (chcr_ktls_update_snd_una(tx_info, q))
-			goto out;
+//		if (chcr_ktls_update_snd_una(tx_info, q))
+//			goto out;
 		atomic64_inc(&tx_info->adap->ch_ktls_stats.ktls_tx_middle_pkts);
 	} else {
 		atomic64_inc(&tx_info->adap->ch_ktls_stats.ktls_tx_start_pkts);
@@ -2025,8 +2030,6 @@ static int chcr_ktls_xmit(struct sk_buff *skb, struct net_device *dev)
 	spin_lock_irqsave(&tx_ctx->base.lock, flags);
 
 	do {
-		int i;
-
 		cxgb4_reclaim_completed_tx(adap, &q->q, true);
 		/* fetch the tls record */
 		record = tls_get_record(&tx_ctx->base, tcp_seq,
@@ -2100,15 +2103,6 @@ static int chcr_ktls_xmit(struct sk_buff *skb, struct net_device *dev)
 			continue;
 		}
 
-		/* increase page reference count of the record, so that there
-		 * won't be any chance of page free in middle if in case stack
-		 * receives ACK and try to delete the record.
-		 */
-		for (i = 0; i < record->num_frags; i++)
-			__skb_frag_ref(&record->frags[i]);
-		/* lock cleared */
-
-
 		/* if a tls record is finishing in this SKB */
 		if (tls_end_offset <= data_len) {
 			ret = chcr_end_part_handler(tx_info, skb, record,
@@ -2134,11 +2128,6 @@ static int chcr_ktls_xmit(struct sk_buff *skb, struct net_device *dev)
 			data_len = 0;
 		}
 
-		/* clear the frag ref count which increased locally before */
-		for (i = 0; i < record->num_frags; i++) {
-			/* clear the frag ref count */
-			__skb_frag_unref(&record->frags[i]);
-		}
 		/* if any failure, come out from the loop. */
 		if (ret) {
 			spin_unlock_irqrestore(&tx_ctx->base.lock, flags);
