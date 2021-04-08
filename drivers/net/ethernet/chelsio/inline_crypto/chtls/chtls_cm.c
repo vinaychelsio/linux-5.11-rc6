@@ -106,6 +106,8 @@ static struct net_device *chtls_find_netdev(struct chtls_dev *cdev,
 		if (likely(!inet_sk(sk)->inet_rcv_saddr))
 			return ndev;
 		ndev = __ip_dev_find(&init_net, inet_sk(sk)->inet_rcv_saddr, false);
+		if (!(ndev->features & NETIF_F_HW_TLS_RECORD))
+			ndev = NULL;
 		break;
 #if IS_ENABLED(CONFIG_IPV6)
 	case PF_INET6:
@@ -120,6 +122,8 @@ static struct net_device *chtls_find_netdev(struct chtls_dev *cdev,
 				break;
 			}
 		}
+		if (!(ndev->features & NETIF_F_HW_TLS_RECORD))
+			ndev = NULL;
 	break;
 #endif
 	default:
