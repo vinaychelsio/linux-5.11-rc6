@@ -1410,8 +1410,8 @@ static void chtls_select_window(struct sock *sk)
 static u32 send_rx_credits(struct chtls_sock *csk, u32 credits)
 {
 	struct cpl_rx_data_ack *req;
+	int dack = 0, sendack = 1;
 	struct sk_buff *skb;
-	int dack = 0;
 
 	skb = alloc_skb(sizeof(*req), GFP_ATOMIC);
 	if (!skb)
@@ -1419,15 +1419,17 @@ static u32 send_rx_credits(struct chtls_sock *csk, u32 credits)
 	__skb_put(skb, sizeof(*req));
 	req = (struct cpl_rx_data_ack *)skb->head;
 
-	if (!tcp_in_quickack(csk->sk))
+	if (!tcp_in_quickack(csk->sk)) {
 		dack = 2;
+		sendack = 0;
+	}
 
 	set_wr_txq(skb, CPL_PRIORITY_ACK, csk->port_id);
 	INIT_TP_WR(req, csk->tid);
 	OPCODE_TID(req) = cpu_to_be32(MK_OPCODE_TID(CPL_RX_DATA_ACK,
 						    csk->tid));
 	req->credit_dack = cpu_to_be32(RX_CREDITS_V(credits) |
-				       RX_FORCE_ACK_F |
+				       RX_FORCE_ACK_V(sendack) |
 				       RX_DACK_CHANGE_F | RX_DACK_MODE_V(dack));
 	cxgb4_ofld_send(csk->cdev->ports[csk->port_id], skb);
 	return credits;
