@@ -1255,6 +1255,7 @@ static struct sock *chtls_recv_sock(struct sock *lsk,
 					   sock_net(newsk)->
 						ipv4.sysctl_tcp_window_scaling,
 					   tp->window_clamp);
+	inet_csk(newsk)->icsk_ack.pingpong = TCP_PINGPONG_THRESH;
 	neigh_release(n);
 	inet_inherit_port(&tcp_hashinfo, lsk, newsk);
 	csk_set_flag(csk, CSK_CONN_INLINE);

@@ -26,6 +26,7 @@
 
 #include "t4fw_api.h"
 #include "t4_msg.h"
+#include "t4_tcb.h"
 #include "cxgb4.h"
 #include "cxgb4_uld.h"
 #include "l2t.h"
@@ -570,6 +571,7 @@ int chtls_sendpage(struct sock *sk, struct page *page,
 		   int offset, size_t size, int flags);
 int send_tx_flowc_wr(struct sock *sk, int compl,
 		     u32 snd_nxt, u32 rcv_nxt);
+int tcp_in_quickack(struct sock *sk);
 void chtls_tcp_push(struct sock *sk, int flags);
 int chtls_push_frames(struct chtls_sock *csk, int comp);
 int send_tx_param_update_wr(struct sock *sk, unsigned int mnem,

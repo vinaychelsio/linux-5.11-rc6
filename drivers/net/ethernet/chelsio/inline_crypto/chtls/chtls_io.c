@@ -156,6 +156,16 @@ static u8 tcp_state_to_flowc_state(u8 state)
 	return FW_FLOWC_MNEM_TCPSTATE_ESTABLISHED;
 }
 
+int tcp_in_quickack(struct sock *sk)
+{
+	struct dst_entry *dst;
+
+	dst = __sk_dst_get(sk);
+
+	return (dst && dst_metric(dst, RTAX_QUICKACK)) ||
+		!(inet_csk(sk)->icsk_ack.pingpong >= TCP_PINGPONG_THRESH);
+}
+
 int send_tx_flowc_wr(struct sock *sk, int compl,
 		     u32 snd_nxt, u32 rcv_nxt)
 {
@@ -1401,6 +1411,7 @@ static u32 send_rx_credits(struct chtls_sock *csk, u32 credits)
 {
 	struct cpl_rx_data_ack *req;
 	struct sk_buff *skb;
+	int dack = 0;
 
 	skb = alloc_skb(sizeof(*req), GFP_ATOMIC);
 	if (!skb)
@@ -1408,12 +1419,16 @@ static u32 send_rx_credits(struct chtls_sock *csk, u32 credits)
 	__skb_put(skb, sizeof(*req));
 	req = (struct cpl_rx_data_ack *)skb->head;
 
+	if (!tcp_in_quickack(csk->sk))
+		dack = 2;
+
 	set_wr_txq(skb, CPL_PRIORITY_ACK, csk->port_id);
 	INIT_TP_WR(req, csk->tid);
 	OPCODE_TID(req) = cpu_to_be32(MK_OPCODE_TID(CPL_RX_DATA_ACK,
 						    csk->tid));
 	req->credit_dack = cpu_to_be32(RX_CREDITS_V(credits) |
-				       RX_FORCE_ACK_F);
+				       RX_FORCE_ACK_F |
+				       RX_DACK_CHANGE_F | RX_DACK_MODE_V(dack));
 	cxgb4_ofld_send(csk->cdev->ports[csk->port_id], skb);
 	return credits;
 }

@@ -454,6 +454,11 @@ int chtls_setkey(struct chtls_sock *csk, u32 keylen,
 		ret = chtls_set_tcb_quiesce(sk, 0);
 		if (ret)
 			goto out_notcb;
+		if (!tcp_in_quickack(csk->sk)) {
+			ret = chtls_set_tcb_tflag(sk, TF_DACK_MSS_S, 1);
+			if (ret)
+				goto out_notcb;
+		}
 		csk->tlshws.rxkey = keyid;
 	} else {
 		csk->tlshws.tx_seq_no = 0;

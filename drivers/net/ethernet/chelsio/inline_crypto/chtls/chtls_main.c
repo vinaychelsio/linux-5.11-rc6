@@ -570,6 +570,16 @@ static int chtls_setsockopt(struct sock *sk, int level, int optname,
 			    sockptr_t optval, unsigned int optlen)
 {
 	struct tls_context *ctx = tls_get_ctx(sk);
+	int val;
+
+	if (optname == TCP_QUICKACK) {
+		if (copy_from_sockptr(&val, optval, sizeof(val)))
+			return -EFAULT;
+		if (!val)
+			inet_csk(sk)->icsk_ack.pingpong = TCP_PINGPONG_THRESH;
+		else
+			inet_csk(sk)->icsk_ack.pingpong = 0;
+	}
 
 	if (level != SOL_TLS)
 		return ctx->sk_proto->setsockopt(sk, level,
