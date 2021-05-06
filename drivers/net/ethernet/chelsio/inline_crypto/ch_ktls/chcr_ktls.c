@@ -2236,6 +2236,7 @@ static int chcr_ktls_uld_state_change(void *handle, enum cxgb4_state new_state)
 
 static struct cxgb4_uld_info chcr_ktls_uld_info = {
 	.name = CHCR_KTLS_DRV_MODULE_NAME,
+	.ntxq = MAX_ULD_QSETS,
 	.nrxq = 1,
 	.rxq_size = 1024,
 	.add = chcr_ktls_uld_add,
